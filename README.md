@@ -1,6 +1,6 @@
 # task-10_3-Final-project  
 
-# NovaData Retail Data Pipeline
+# Retail Data Pipeline
 
 Исполнитель: Александр Бурлаков.
 
