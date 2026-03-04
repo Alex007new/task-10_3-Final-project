@@ -1,0 +1,201 @@
+#version: "3.8"
+
+name: retail_project
+
+networks:
+  retail_net:
+    driver: bridge
+
+volumes:
+  retail_mongo_data:
+  retail_clickhouse_data:
+  retail_clickhouse_logs:
+  retail_grafana_data:
+  retail_zk_data:
+  retail_kafka_data:
+  retail_minio_data:
+
+services:
+  # -----------------------
+  # MongoDB (хранилище заказчика)
+  # Host: 27018 -> Container: 27017
+  # -----------------------
+  mongo:
+    image: mongo:7
+    container_name: retail_mongo
+    restart: unless-stopped
+    ports:
+      - "27018:27017"
+    volumes:
+      - retail_mongo_data:/data/db
+    networks:
+      - retail_net
+
+  # -----------------------
+  # Zookeeper
+  # Host: 2182 -> Container: 2181
+  # -----------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.3
+    container_name: retail_zookeeper
+    restart: unless-stopped
+    ports:
+      - "2182:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    volumes:
+      - retail_zk_data:/var/lib/zookeeper
+    networks:
+      - retail_net
+
+  # -----------------------
+  # Kafka
+  # Host: 9093 -> Container: 9092
+  # -----------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.3.3
+    container_name: retail_kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9093"
+    #environment:
+    #  KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+      # Важно:
+      # - клиенты на хосте подключаются к localhost:9093
+      # - контейнеры подключаются к kafka:9092
+    #  KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9093
+    #  KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+    # 
+    #  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    #  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+    # Два listener'а:
+    # - INTERNAL для контейнеров: kafka:9092
+    # - EXTERNAL для хоста: localhost:9093
+    # “каноническая” схема для Docker: контейнеры ходят на kafka:9092, хост — на localhost:9093 
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - retail_kafka_data:/var/lib/kafka/data
+    networks:
+      - retail_net
+
+  # -----------------------
+  # ClickHouse (RAW + MART)
+  # Host: 8124/9004 -> Container: 8123/9000
+  # -----------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: retail_clickhouse
+    restart: unless-stopped
+    ports:
+      - "8124:8123"
+      - "9004:9000"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - retail_clickhouse_data:/var/lib/clickhouse
+      - retail_clickhouse_logs:/var/log/clickhouse-server
+      # Если хочешь авто-init DDL (RAW/MART) — раскомментируй:
+      # - ./clickhouse/init:/docker-entrypoint-initdb.d
+    networks:
+      - retail_net
+
+  # -----------------------
+  # Grafana
+  # Host: 3001 -> Container: 3000
+  # -----------------------
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: retail_grafana
+    restart: unless-stopped
+    depends_on:
+      - clickhouse
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: vertamedia-clickhouse-datasource,yesoreyeram-infinity-datasource
+    volumes:
+      - retail_grafana_data:/var/lib/grafana
+      # Если хочешь provisioning datasource — раскомментируй:
+      # - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - retail_net
+
+  # -----------------------
+  # MinIO (S3)
+  # Host: 9002/9003 -> Container: 9000/9001
+  # -----------------------
+  minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: retail_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - retail_minio_data:/data
+    networks:
+      - retail_net
+
+  # -----------------------
+  # MinIO client: создаёт bucket analytics
+  # -----------------------
+  mc:
+    image: minio/mc:latest
+    container_name: retail_minio_mc
+    depends_on:
+      - minio
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: >
+      "sleep 5 &&
+       mc alias set local http://minio:9000 minioadmin minioadmin &&
+       mc mb -p local/analytics || true &&
+       mc anonymous set download local/analytics || true &&
+       tail -f /dev/null"
+    networks:
+      - retail_net
+    
+#####################################
+
+  producer:
+    image: python:3.11-slim
+    container_name: retail_producer
+    working_dir: /app
+    volumes:
+      - ./scripts:/app/scripts
+      - ./.env:/app/.env
+    command: >
+      bash -lc "pip install --no-cache-dir pymongo confluent-kafka python-dotenv
+      && python scripts/mongo_to_kafka_l0.py"
+    environment:
+      # внутри docker-сети
+      - KAFKA_BOOTSTRAP=kafka:9092
+      # mongo у тебя в docker-сети на имени сервиса mongo:27017
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=retail
+    depends_on:
+      - kafka
+      - mongo
+    networks:
+      - retail_net  
+      
