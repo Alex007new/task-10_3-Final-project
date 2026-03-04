@@ -37,7 +37,7 @@ MinIO S3 (экспорт аналитической витрины)
 
 # Этапы проекта
 
-## 1 Генерация данных
+## 1. Генерация данных
 
 Скрипт `data_generator.py` генерирует JSON данные:
 
@@ -50,13 +50,13 @@ MinIO S3 (экспорт аналитической витрины)
 
 ---
 
-## 2 Kafka → ClickHouse RAW
+## 2. Kafka → ClickHouse RAW
 
 Данные передаются из MongoDB в Kafka и затем загружаются в ClickHouse RAW.
 
 ---
 
-## 3 Grafana мониторинг
+## 3. Grafana мониторинг
 
 Создан дашборд, показывающий:
 
@@ -64,13 +64,9 @@ MinIO S3 (экспорт аналитической витрины)
 - количество магазинов
 - количество покупателей
 
-### Grafana dashboard
-
-![Grafana Dashboard](screenshots/grafana_dashboard.png)
-
 ---
 
-## 4 Очистка данных
+## 4. Очистка данных
 
 SQL-скрипты ClickHouse выполняют:
 
@@ -84,7 +80,7 @@ SQL-скрипты ClickHouse выполняют:
 
 ---
 
-## 5 ETL PySpark
+## 5. ETL PySpark
 
 PySpark формирует витрину `customer_feature_matrix`.
 
@@ -105,18 +101,13 @@ PySpark формирует витрину `customer_feature_matrix`.
 
 ---
 
-## 6 Экспорт данных в S3
+## 6. Экспорт данных в S3
 
 Финальная витрина экспортируется из ClickHouse в MinIO (S3) в формате CSV.
 
 Файл: analytic_result_2026_02.csv  
 
-
 Количество столбцов строго соответствует ТЗ.
-
-### S3 файл
-
-![S3 export](screenshots/s3_minio_file.png)
 
 ---
 
@@ -133,30 +124,19 @@ PySpark формирует витрину `customer_feature_matrix`.
 - grafana
 - minio
 
-### Docker containers
-
-![Docker containers](screenshots/docker_containers.png)
-
 ---
 
 # Alerting
 
 Grafana настроена на обнаружение дубликатов.
 
-Если количество дубликатов превышает 50%, отправляется сообщение в Telegram.
-
-### Telegram alert
-
-![Telegram alert](screenshots/telegram_bot_alert.png)
+Если количество дубликатов превышает 50%, отправляется сообщение в Telegram (бот Alex007new, скриншоты прилагаются).
 
 ---
 
-# Feature Matrix
+# Feature Matrix  
 
-Пример витрины:
-
-![Feature matrix](screenshots/feature_matrix.png)
-
+Примеры загрузки витрины прилагаются.  
 
 
 ---
